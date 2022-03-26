@@ -23,7 +23,7 @@ parser.add_argument("-m", "--num_nodes", default=1, type=int)
 parser.add_argument("-p", "--probability", default=1, type=float)
 parser.add_argument("-rho", "--connectivity", default=0, type=float)
 ## solver
-parser.add_argument("--solver", choices=("centralized", "pcta", "patc","netlasso","primaldual",))
+parser.add_argument("--solver", choices=("centralized", "pcta", "patc","netlasso","primaldual","pgextra"))
 parser.add_argument("--projecting", action="store_true")
 parser.add_argument("--max_iter", type=int, default=1000000)
 parser.add_argument("--tol", type=float, default=1e-8)
@@ -84,6 +84,9 @@ def main():
     elif args.solver == 'netlasso':
         print("netlasso")
         solver = NetLasso(args.max_iter, gamma, r, w, args.communication, args.local_computation)
+    elif args.solver == 'pgextra':
+        print("pgextra")
+        solver = PGExtra(args.max_iter, gamma, r, w, args.communication, args.local_computation)
     elif args.solver == 'primaldual':
         if args.betascheduler == "const":
             beta = ConstScheduler(args.beta)

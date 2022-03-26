@@ -33,7 +33,7 @@ class PGD(Solver):
         loss = []
         N, d = X.shape
         # initialize iterates
-        theta = 0.1 * np.ones((1, d))
+        theta = 0.0 * np.ones((1, d))
         # iterates!
         loss_matrix = []
         for step in range(self.max_iteration):
@@ -149,7 +149,8 @@ class NetLasso(PCTA):
         N, d = X.shape
         self.grad_track = np.zeros((self.m, d, 1))
         self.last_grad = np.zeros((self.m, d, 1))
-        super().fit(X, Y, ground_truth, verbose)
+        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
+        return theta, loss_matrix
 
 
 class PrimalDual(PCTA):
@@ -169,5 +170,23 @@ class PrimalDual(PCTA):
     
     def fit(self, X, Y, ground_truth, verbose):
         N, d = X.shape
-        self.dual_var = 0.1 * np.ones((self.m, d, 1))
-        super().fit(X, Y, ground_truth, verbose)
+        self.dual_var = 0.0 * np.ones((self.m, d, 1))
+        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
+        return theta, loss_matrix
+
+
+class PGExtra(PCTA):        
+    def iterate(self, theta, x, y):
+        m, n, d = x.shape
+        gamma = self.gamma()
+        theta = np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
+        self.dual_var += 0.5 * (theta - np.expand_dims(self.w @ theta.squeeze(axis=2), axis=2))
+        theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
+        return theta
+        # iterates!
+    
+    def fit(self, X, Y, ground_truth, verbose):
+        N, d = X.shape
+        self.dual_var = 0.0 * np.ones((self.m, d, 1))
+        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
+        return theta, loss_matrix
