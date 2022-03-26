@@ -162,8 +162,8 @@ class PrimalDual(PCTA):
         m, n, d = x.shape
         gamma = self.gamma()
         beta = self.beta()
-        theta = np.expand_dims(self.w @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
-        self.dual_var += beta * (theta - np.expand_dims(self.w @ theta.squeeze(axis=2), axis=2))
+        theta = np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
+        self.dual_var += beta * (theta - np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2), axis=2))
         theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
         return theta
         # iterates!
