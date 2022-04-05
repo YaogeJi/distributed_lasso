@@ -23,7 +23,7 @@ parser.add_argument("-m", "--num_nodes", default=1, type=int)
 parser.add_argument("-p", "--probability", default=1, type=float)
 parser.add_argument("-rho", "--connectivity", default=0, type=float)
 ## solver
-parser.add_argument("--solver", choices=("centralized", "pcta", "patc","netlasso","primaldual","pgextra"))
+parser.add_argument("--solver", choices=("pgd", "pcta", "patc","netlasso","primaldual","pgextra"))
 parser.add_argument("--projecting", action="store_true")
 parser.add_argument("--max_iter", type=int, default=1000000)
 parser.add_argument("--tol", type=float, default=1e-8)
@@ -65,6 +65,7 @@ def main():
         os.makedirs(network_path, exist_ok=True)
         pickle.dump(w, open(network_file, "wb"))
     print(np.sum(X), np.sum(Y))
+    w = (w + np.eye(w.shape[0])) / 2 
     ## process stepsize
     if args.scheduler == "const":
         gamma = ConstScheduler(args.gamma)

@@ -49,6 +49,7 @@ class PGD(Solver):
             #     print("Early convergence at step {} with log loss {}, I quit.".format(step, log_loss[-1]))
             #     return theta, log_loss
         else:
+            print(step, loss_matrix[-1])
             print("Max iteration, I quit.")
             return theta, loss_matrix
 
@@ -102,6 +103,7 @@ class PCTA(PGD):
             #     print("Early convergence at step {} with log loss {}, I quit.".format(step, log_loss[-1]))
             #     return theta, log_loss
         else:
+            print(step, loss_matrix[-1])
             print("Max iteration, I quit.")
             return theta, loss_matrix
 
@@ -162,8 +164,8 @@ class PrimalDual(PCTA):
         m, n, d = x.shape
         gamma = self.gamma()
         beta = self.beta()
-        theta = np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
-        self.dual_var += beta * (theta - np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2), axis=2))
+        theta = np.expand_dims(self.w  @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
+        self.dual_var += beta * (theta - np.expand_dims(self.w @ theta.squeeze(axis=2), axis=2))
         theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
         return theta
         # iterates!
