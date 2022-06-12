@@ -22,6 +22,7 @@ parser.add_argument("--data_index", type=int, default=0)
 parser.add_argument("-m", "--num_nodes", default=1, type=int)
 parser.add_argument("-p", "--probability", default=1, type=float)
 parser.add_argument("-rho", "--connectivity", default=0, type=float)
+parser.add_argument("--network_index", type=int, default=0)
 ## solver
 parser.add_argument("--solver", choices=("pgd", "pcta", "patc","netlasso","primaldual","pgextra"))
 parser.add_argument("--projecting", action="store_true")
@@ -40,18 +41,18 @@ args = parser.parse_args()
 
 
 def main():
+    home_dir = "/export/home/a/ji151/distributed_lasso/"
     # preprocessing data
-    data_path = "../data/N{}_d{}_s{}_k{}_sigma{}/".format(
-        args.num_samples, args.num_dimensions, args.sparsity, args.k, args.sigma)
-    data_file = data_path + "exp{}.data".format(args.data_index)
-    network_path = "../network/"
-    network_file = network_path + "m{}_rho{}.network".format(args.num_nodes, args.connectivity)
-
+    data_path = os.path.join(home_dir, "data/N{}_d{}_s{}_k{}_sigma{}/".format(
+        args.num_samples, args.num_dimensions, args.sparsity, args.k, args.sigma))
+    data_file = os.path.join(data_path, "exp{}.data".format(args.data_index))
+    network_path = os.path.join(home_dir, "network/m{}_rho{}/".format(args.num_nodes, args.connectivity))
+    network_file = network_path + "exp{}.network".format(args.network_index)
     ## processing data
     try:
         X, Y, ground_truth, optimal_lambda, min_stat_error = pickle.load(open(data_file, "rb"))
         
-    except FileNotFoundError:
+    except FileNotFoundError or EOFError:
         os.makedirs(data_path, exist_ok=True)
         generator = Generator(args.num_samples, args.num_dimensions, args.sparsity, args.k, args.sigma)
         X, Y, ground_truth, optimal_lambda, min_stat_error = generator.generate()
@@ -65,7 +66,7 @@ def main():
         os.makedirs(network_path, exist_ok=True)
         pickle.dump(w, open(network_file, "wb"))
     print(np.sum(X), np.sum(Y))
-    w = (w + np.eye(w.shape[0])) / 2 
+    # w = (w + np.eye(w.shape[0])) / 2 
     ## process stepsize
     if args.scheduler == "const":
         gamma = ConstScheduler(args.gamma)
@@ -101,7 +102,7 @@ def main():
     outputs = solver.fit(X, Y, ground_truth, verbose=args.verbose)
     finish_timer = time.time()
     print("solver spend {} seconds".format(finish_timer-start_timer))
-    output_filepath = args.storing_filepath
+    output_filepath = os.path.join(home_dir, args.storing_filepath)
     output_filename = args.storing_filename
     os.makedirs(output_filepath, exist_ok=True)
     pickle.dump(outputs, open(output_filepath + output_filename, "wb"))
