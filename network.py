@@ -11,17 +11,20 @@ class FullyConnectedNetwork:
         return self.w
 
 class ErodoRenyi:
-    def __init__(self, m, rho, p):
+    def __init__(self, m, rho, p, seed):
         self.node = m
         self.rho = rho
         self.probability = p
+        self.seed = seed
 
     def generate(self):
         connected = False
         connectivity = 1
         print("network generating")
+        seed = self.seed
         for i in range(100000):
-            G = erdos_renyi_graph(self.node, self.probability)
+            G = erdos_renyi_graph(self.node, self.probability, seed=seed)
+            seed += 1
             connected = is_connected(G)
             if not connected:
                 continue
@@ -41,7 +44,6 @@ class ErodoRenyi:
                 print(connectivity)
                 if np.abs(connectivity - self.rho) < 0.001:
                     print("generating network succeed")
-                    print(connectivity)
                     return weighted_matrix
         else:
             raise MaxIterError("achieve max iteration without achieving target connectivity")

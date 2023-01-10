@@ -2,108 +2,77 @@ import time
 import argparse
 import pickle
 import os
-from generator import Generator
+from generator import Generator, BoundedGenerator
 from network import ErodoRenyi
 from solver import *
 from scheduler import *
+from utils import *
 
 # configuration
 parser = argparse.ArgumentParser(description='distributed optimization')
-parser.add_argument('--storing_filepath', default='', type=str, help='storing_file_path')
-parser.add_argument('--storing_filename', default='', type=str, help='storing_file_name')
+parser.add_argument('--storing_filepath', type=str, help='storing_file_path')
+parser.add_argument('--storing_filename', type=str, help='storing_file_name')
+parser.add_argument('--data_dir', type=str, default="/export/home/a/ji151/distributed_stochastic/")
 ## data
 parser.add_argument("-N", "--num_samples", type=int)
 parser.add_argument("-d", "--num_dimensions", type=int)
 parser.add_argument("-s", "--sparsity", type=int)
-parser.add_argument("-k", type=float, default=0.25)
 parser.add_argument("--sigma", type=float, default=0.5)
-parser.add_argument("--data_index", type=int, default=0)
+
 ## network
 parser.add_argument("-m", "--num_nodes", default=1, type=int)
 parser.add_argument("-p", "--probability", default=1, type=float)
 parser.add_argument("-rho", "--connectivity", default=0, type=float)
-parser.add_argument("--network_index", type=int, default=0)
 ## solver
-parser.add_argument("--solver", choices=("pgd", "pcta", "patc","netlasso","primaldual","pgextra"))
-parser.add_argument("--projecting", action="store_true")
-parser.add_argument("--max_iter", type=int, default=1000000)
-parser.add_argument("--tol", type=float, default=1e-8)
-parser.add_argument("--iter_type", choices=("lagrangian", "projected"))
+parser.add_argument("--batch_size", type=int, default=1)
+parser.add_argument("--solver", choices=("cta", "atc", "dual_average"))
+parser.add_argument("--max_iter", type=int, default=100000)
+
 parser.add_argument("--gamma", type=float)
-parser.add_argument("--beta", type=float, default=0)
 parser.add_argument("--communication", type=int, default=1)
 parser.add_argument("--local_computation", type=int, default=1)
 parser.add_argument("--scheduler", choices=("const","diminish"), default="const")
-parser.add_argument("--betascheduler", choices=("const","diminish"), default="const")
+parser.add_argument("-b", "--range", default=10, type=float)
+parser.add_argument("--generator", choices=("gaussian", "unform"), default="gaussian")
 ## others
-parser.add_argument("--verbose", action="store_true")
+parser.add_argument("--seed", type=int, default=8989)
 args = parser.parse_args()
 
 
 def main():
-    home_dir = "/export/home/a/ji151/distributed_lasso/"
-    # preprocessing data
-    data_path = os.path.join(home_dir, "data/N{}_d{}_s{}_k{}_sigma{}/".format(
-        args.num_samples, args.num_dimensions, args.sparsity, args.k, args.sigma))
-    data_file = os.path.join(data_path, "exp{}.data".format(args.data_index))
-    network_path = os.path.join(home_dir, "network/m{}_rho{}/".format(args.num_nodes, args.connectivity))
-    network_file = network_path + "exp{}.network".format(args.network_index)
-    ## processing data
-    try:
-        X, Y, ground_truth, optimal_lambda, min_stat_error = pickle.load(open(data_file, "rb"))
-        
-    except FileNotFoundError or EOFError:
-        os.makedirs(data_path, exist_ok=True)
-        generator = Generator(args.num_samples, args.num_dimensions, args.sparsity, args.k, args.sigma)
-        X, Y, ground_truth, optimal_lambda, min_stat_error = generator.generate()
-        pickle.dump([X, Y, ground_truth, optimal_lambda, min_stat_error], open(data_file, "wb"))
-    r = np.linalg.norm(ground_truth, ord=1)
+    batch_size_generator = ConstBatchSizeGenerator(args.batch_size, args.max_iter)
+    if args.generator == "gaussian":
+        generator = Generator(batch_size_generator=batch_size_generator, m=args.num_nodes, dimension=args.num_dimensions, sparsity=args.sparsity, noise_dev=args.sigma, seed=args.seed)
+    else:
+        generator = BoundedGenerator(batch_size_generator=batch_size_generator, m=args.num_nodes, dimension=args.num_dimensions, B=args.range, sparsity=args.sparsity, noise_dev=args.sigma, seed=args.seed)
+    ground_truth = generator.theta
     ## processing network
-    try:
-        w = pickle.load(open(network_file, "rb"))
-    except:
-        w = ErodoRenyi(m=args.num_nodes, rho=args.connectivity, p=args.probability).generate()
-        os.makedirs(network_path, exist_ok=True)
-        pickle.dump(w, open(network_file, "wb"))
-    print(np.sum(X), np.sum(Y))
-    # w = (w + np.eye(w.shape[0])) / 2 
+    
+    w = ErodoRenyi(m=args.num_nodes, rho=args.connectivity, p=args.probability, seed=args.seed).generate()
+
     ## process stepsize
     if args.scheduler == "const":
-        gamma = ConstScheduler(args.gamma)
+        gamma = ConstScheduler(args)
     elif args.scheduler == "diminish":
-        gamma = DiminishScheduler(args.gamma)
+        gamma = DiminishScheduler(args)
 
     # solver run
-    if args.solver == 'pgd':
-        print("PGD")
-        solver = PGD(args.max_iter, gamma, r)
-    elif args.solver == 'pcta':
-        print("projected_cta")
-        solver = PCTA(args.max_iter, gamma, r, w, args.communication, args.local_computation)
-    elif args.solver == 'patc':
-        print("projected_atc")
-        solver = PATC(args.max_iter, gamma, r, w, args.communication, args.local_computation)
-    elif args.solver == 'netlasso':
-        print("netlasso")
-        solver = NetLasso(args.max_iter, gamma, r, w, args.communication, args.local_computation)
-    elif args.solver == 'pgextra':
-        print("pgextra")
-        solver = PGExtra(args.max_iter, gamma, r, w, args.communication, args.local_computation)
-    elif args.solver == 'primaldual':
-        if args.betascheduler == "const":
-            beta = ConstScheduler(args.beta)
-        elif args.betascheduler == "diminish":
-            beta = DiminishScheduler(args.beta)
-        print("primal_dual")
-        solver = PrimalDual(args.max_iter, gamma, beta, r, w, args.communication, args.local_computation)
+    if args.solver == 'cta':
+        solver = CTA(generator, w, gamma)
+    elif args.solver == 'atc':
+        solver = ATC(generator, w, gamma)
+    elif args.solver == 'dual_average':
+        solver = DualAveraging(generator, w, gamma)
     else:
         raise NotImplementedError("solver mode currently only support centralized or distributed")
     start_timer = time.time()
-    outputs = solver.fit(X, Y, ground_truth, verbose=args.verbose)
+    outputs = solver.fit()
     finish_timer = time.time()
     print("solver spend {} seconds".format(finish_timer-start_timer))
+    home_dir = args.data_dir
     output_filepath = os.path.join(home_dir, args.storing_filepath)
     output_filename = args.storing_filename
+    print(output_filepath + output_filename)
     os.makedirs(output_filepath, exist_ok=True)
     pickle.dump(outputs, open(output_filepath + output_filename, "wb"))
 

@@ -1,194 +1,123 @@
 import numpy as np
 import time
-from projection import proj_l1ball as proj
+from utils import proj_l1ball as proj
 from sklearn import linear_model
 import scipy
+import copy
 
-class Solver:
-    def __init__(self, max_iteration, gamma):
-        self.max_iteration = int(max_iteration)
+
+class OnlineSolver(object):
+    def __init__(self, generator, network, gamma, computation=1, communication=1, cta=True) -> None:
+        assert generator.m == network.shape[0]                # specifically for online version
+        self.generator = generator
+        self.network = network
         self.gamma = gamma
-
-    def fit(self, X, Y, ground_truth, verbose):
-        raise NotImplementedError
-
-    def show_param(self):
-        raise NotImplementedError
-
-
-class PGD(Solver):
-    def __init__(self, max_iteration, gamma, project_radius):
-        super(PGD, self).__init__(max_iteration, gamma)
-        self.r = project_radius
-
-    def iterate(self, theta, x, y):
-        N, d = x.shape
-        gamma = self.gamma()
-        theta = theta - gamma / N * (theta @ x.T - y.T) @ x
-        theta = proj(theta, self.r)
-        return theta
-
-    def fit(self, X, Y, ground_truth, verbose):
-        # initialize parameters we need
-        loss = []
-        N, d = X.shape
-        # initialize iterates
-        theta = 0.0 * np.ones((1, d))
-        # iterates!
-        loss_matrix = []
-        for step in range(self.max_iteration):
-            # theta_last = theta.copy()
-            theta = self.iterate(theta, X, Y)
-            if ground_truth is not None:
-                loss_matrix.append(np.linalg.norm(theta - ground_truth.T, ord=2) ** 2)
-                if step % 100 == 0:
-                    print(step, loss_matrix[-1])
-            # if np.linalg.norm(theta-theta_last, ord=2) < self.terminate_condition:
-            # if np.linalg.norm(theta - theta_last, ord=2) < self.terminate_condition:
-            # if np.linalg.norm(theta - theta_last, ord=2) / np.linalg.norm(theta_last, ord=2)  < self.terminate_condition:
-            #     print("Early convergence at step {} with log loss {}, I quit.".format(step, log_loss[-1]))
-            #     return theta, log_loss
-        else:
-            print(step, loss_matrix[-1])
-            print("Max iteration, I quit.")
-            return theta, loss_matrix
-
-
-class PCTA(PGD):
-    def __init__(self, max_iteration, gamma, project_radius, w, communication=1, local_computation=1):
-        super(PCTA, self).__init__(max_iteration, gamma, project_radius)
-        self.w = w
-        self.m = self.w.shape[0]
+        self.computation = computation
         self.communication = communication
-        self.local_computation = local_computation
+        self.cta = cta    #this is a switch to decide whether communicate first or adapt first 
+        self.theta = np.ones([self.generator.m] + list(self.generator.theta.shape))  # + means extending the list to a np tenser: m*d*1
+        
 
-    def iterate(self, theta, x, y):
-        m, n, d = x.shape
-        gamma = self.gamma()
-        theta = np.linalg.matrix_power(self.w, self.communication) @ theta.squeeze(axis=2)
-        theta = np.expand_dims(theta, axis=2)
-        for local_updates in range(self.local_computation):
-            theta = theta - gamma / n * x.transpose(0,2,1) @ (x @ theta - y)
-            theta = theta.squeeze(axis=2)
-            theta = (proj(theta, self.r)).reshape(m, d, 1)
-        return theta
-
-    def fit(self, X, Y, ground_truth, verbose):
-        # Initialize parameters we need
-        N, d = X.shape
-        assert N % self.m == 0, "sample size {} is indivisible by {} nodes.".format(N, self.m)
-        # Initialize iterates
-        theta = 1.0 * np.ones((self.m, d, 1))
-        x = X.reshape(self.m, int(N / self.m), d)
-        y = Y.reshape(self.m, int(N / self.m), 1)
-
-        # iterates!
+    def fit(self):
         loss_matrix = []
-        for step in range(self.max_iteration):
-            if verbose:
-                if step % 100 == 0 and step != 0:
-                    if ground_truth is not None:
-                        print("{}/{}, loss = {}".format(step, self.max_iteration, loss_matrix[-1]))
-                    else:
-                        print("{}/{}".format(step, self.max_iteration))
-            if ground_truth is not None:
-                "optimization error has bug here. shape of comparison is not consensus."
-                loss_matrix.append(np.linalg.norm(theta.squeeze() - np.repeat(ground_truth.T, self.m, axis=0), ord=2) ** 2 / self.m)
-            # theta_last = theta.copy()
-            theta = self.iterate(theta, x, y)
-            # if np.linalg.norm(theta - theta_last, ord=2) < self.terminate_condition:
-            # if np.linalg.norm(theta - theta_last, ord=2) / np.linalg.norm(theta_last, ord=2) < self.terminate_condition:
+        theta_matrix = []
+        for i in range(int(len(self.generator)/self.computation)): # if self.computation=1, this ratio means the total batches being used
+            if self.cta:
+                ref_theta = self.communicate()
+            else:
+                ref_theta = self.theta
+            for local_rounds in range(self.computation):
+                batch = self.generator.sample()
+                loss = self.step(batch, ref_theta)
+                if i % 100 == 0:
+                    print(i, loss)
+            if not self.cta:
+                self.theta = self.communicate()
+            loss_matrix.append(loss)
+            theta_matrix.append(copy.deepcopy(self.theta))
+        return theta_matrix, loss_matrix
+    def step(self, batch):
+        raise NotImplementedError
+    def communicate(self):
+        theta = np.expand_dims(np.linalg.matrix_power(self.network, self.communication) @ self.theta.squeeze(axis=2), axis=2)
+        return theta
 
-            # if np.max(np.linalg.norm(theta-theta_last, ord=2, axis=1)) < self.terminate_condition:
-            #     print("Early convergence at step {} with log loss {}, I quit.".format(step, log_loss[-1]))
-            #     return theta, log_loss
-        else:
-            print(step, loss_matrix[-1])
-            print("Max iteration, I quit.")
-            return theta, loss_matrix
 
 
-class PATC(PCTA):
-    def __init__(self, max_iteration, gamma, project_radius, w, communication=1, local_computation=1):
-        super(PATC, self).__init__(max_iteration, gamma, project_radius, w, communication, local_computation)
+class CTA(OnlineSolver):
+    def __init__(self, generator, network, gamma, computation=1, communication=1) -> None:
+        super().__init__(generator, network, gamma, computation, communication, cta=True)
 
-    def iterate(self, theta, x, y):
+    def step(self, batch, ref_theta):
+        x, y = batch
         m, n, d = x.shape
         gamma = self.gamma()
-        for local_updates in range(self.local_computation):
-            theta = theta - gamma / n * x.transpose(0,2,1) @ (x @ theta - y)
-        theta = np.linalg.matrix_power(self.w, self.communication) @ theta.squeeze(axis=2)
-        theta = (proj(theta, self.r)).reshape(self.m,d,1)
-        return theta
-        # iterates!
+        self.theta = ref_theta - gamma / n * x.transpose(0,2,1) @ (x @ self.theta - y)
+        assert self.theta.shape == (m, d, 1)
+        assert y.shape == (m, n, 1)
+        assert x.shape == (m, n, d)
+        return np.linalg.norm((x @ self.theta - y).reshape(-1,1), ord=2) ** 2 / (m * n)
+
+class ATC(CTA):
+    def __init__(self, generator, network, gamma, computation=1, communication=1) -> None:
+        super().__init__(generator, network, gamma, computation, communication)
+        self.cta = False
 
 
-class NetLasso(PCTA):
-    def __init__(self, max_iteration, gamma, project_radius, w, communication=1, local_computation=1):
-        super(NetLasso, self).__init__(max_iteration, gamma, project_radius, w, communication, local_computation)
-        if self.local_computation != 1:
-            raise NotImplementedError("multi local updates not implemented")
-        self.w = w
-        self.m = self.w.shape[0]
+class DualAveraging(object):
+    def __init__(self, generator, network, gamma, computation=1, communication=1, cta=True, prox=0) -> None:
+        assert generator.m == network.shape[0]
+        self.generator = generator
+        self.network = network
+        self.gamma = gamma
+        self.computation = computation
+        self.communication = communication
+        self.cta = cta
+        self.prox = prox
+        self.theta = np.ones([self.generator.m] + list(self.generator.theta.shape))
+        self.mu = np.ones([self.generator.m] + list(self.generator.theta.shape))
+        self.prox_center = self.prox * np.ones_like(self.theta)
+        self.radius = np.linalg.norm(self.generator.theta, ord=1) * 1.1
+        self.iter = 0
+        self.sample_count = 0
+
+    def fit(self):
+        loss_matrix = []
+        theta_matrix = []
+        mu_matrix = []
+        for i in range(int(len(self.generator)/self.computation)):
+            if self.cta:
+                ref_mu = self.communicate()
+            else:
+               ref_mu = self.mu
+            for local_rounds in range(self.computation):
+                batch = self.generator.sample()
+                loss = self.step(batch, ref_mu)
+                if i % 100 == 0:
+                    print(i, loss)
+            if not self.cta:
+                self.mu = self.communicate()
+            loss_matrix.append(loss)
+            theta_matrix.append(copy.deepcopy(self.theta))
+            mu_matrix.append(copy.deepcopy(self.mu))  
+        return theta_matrix, loss_matrix
     
-    def iterate(self, theta, x, y):
+    def communicate(self):
+       # theta = np.expand_dims(np.linalg.matrix_power(self.network, self.communication) @ self.theta.squeeze(axis=2), axis=2)
+        mu = np.expand_dims(np.linalg.matrix_power(self.network, self.communication) @ self.mu.squeeze(axis=2), axis=2)
+        return mu
+
+    def step(self, batch, ref_mu):
+        x, y = batch
         m, n, d = x.shape
-        gamma = self.gamma()
-        theta = np.linalg.matrix_power(self.w, self.communication) @ theta.squeeze(axis=2)
-        theta = np.expand_dims(theta, axis=2)
-        grad_now = gamma / n * x.transpose(0,2,1) @ (x @ theta - y)
-        last_grad = self.last_grad
-        self.last_grad = grad_now
-        grad_track = self.grad_track
-        grad_track = np.linalg.matrix_power(self.w, self.communication) @ (grad_track + grad_now - last_grad).squeeze(axis=2)
-        grad_track = np.expand_dims(grad_track, axis=2)
-        theta -= gamma * grad_track
-        theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
-        self.grad_track = grad_track
-        return theta
-
-    def fit(self, X, Y, ground_truth, verbose):
-        N, d = X.shape
-        self.grad_track = np.zeros((self.m, d, 1))
-        self.last_grad = np.zeros((self.m, d, 1))
-        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
-        return theta, loss_matrix
-
-
-class PrimalDual(PCTA):
-    def __init__(self, max_iteration, gamma, beta, project_radius, w, communication=1, local_computation=1):
-        super(PrimalDual, self).__init__(max_iteration, gamma, project_radius, w, communication, local_computation)
-        self.beta = beta
-
-    def iterate(self, theta, x, y):
-        m, n, d = x.shape
-        gamma = self.gamma()
-        beta = self.beta()
-        theta = np.expand_dims(self.w  @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
-        self.dual_var += beta * (theta - np.expand_dims(self.w @ theta.squeeze(axis=2), axis=2))
-        theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
-        return theta
-        # iterates!
-    
-    def fit(self, X, Y, ground_truth, verbose):
-        N, d = X.shape
-        self.dual_var = 0.0 * np.ones((self.m, d, 1))
-        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
-        return theta, loss_matrix
-
-
-class PGExtra(PCTA):        
-    def iterate(self, theta, x, y):
-        m, n, d = x.shape
-        gamma = self.gamma()
-        theta = np.expand_dims((self.w + np.eye(m)) / 2 @ theta.squeeze(axis=2),axis=2) - gamma / n * x.transpose(0,2,1) @ (x @ theta - y) - self.dual_var
-        self.dual_var += 0.5 * (theta - np.expand_dims(self.w @ theta.squeeze(axis=2), axis=2))
-        theta = (proj(theta.squeeze(axis=2), self.r)).reshape(self.m,d,1)
-        return theta
-        # iterates!
-    
-    def fit(self, X, Y, ground_truth, verbose):
-        N, d = X.shape
-        self.dual_var = 0.0 * np.ones((self.m, d, 1))
-        theta, loss_matrix = super().fit(X, Y, ground_truth, verbose)
-        return theta, loss_matrix
+        self.sample_count += n
+        self.iter += 1
+        gamma = self.gamma() * self.radius / np.sqrt(self.iter)
+        p = 2*np.log(d)/(2*np.log(d)-1)
+        q = p / (p-1)
+        lmda = 4*self.generator.noise_dev * np.sqrt(np.log(d)/self.iter)
+        gradient = 1 / n * x.transpose(0,2,1) @ (x @ self.theta - y)  #if either argument is N-D, N > 2, it is treated as a stack of matrices residing in the last two indexes and broadcast accordingly.
+        self.mu = ref_mu + gradient + lmda * np.sign(self.theta)
+        xi = np.clip((p - 1) * gamma * np.linalg.norm(self.mu.squeeze(axis=2), ord=q, axis=1, keepdims=True) * self.radius - 1, 0, None)
+        self.theta = np.expand_dims(self.prox_center.squeeze(axis=2) + (self.radius * (p-1) * gamma)/(1 + xi) * np.abs(self.mu.squeeze(axis=2)) ** (q-1) * np.sign(self.mu.squeeze(axis=2)) * np.linalg.norm(self.mu.squeeze(axis=2), ord=q, axis=1, keepdims=True) ** (2 - q), axis=2)
+        return np.linalg.norm((x @ self.theta - y).reshape(-1,1), ord=2) ** 2 / (m * n)
