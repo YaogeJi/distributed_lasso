@@ -40,7 +40,7 @@ class BoundedGenerator(Generator):
 
     def sample(self):
         batch_size = self.batch_size_generator()
-        X = self.rng.uniform(low=-self.B, high=self.B, size=(self.m, int(batch_size), 1))
+        X = self.rng.uniform(low=-self.B, high=self.B, size=(self.m, int(batch_size), self.dimension))
         epsilon = self.rng.normal(0, self.noise_dev ** 2, (self.m, int(batch_size), 1))
         Y = X @ self.theta + epsilon
         return X, Y

@@ -4,7 +4,7 @@ class Scheduler(object):
     def __init__(self, args):
         self.args = args
         self.start_stepsize = args.gamma
-        self.count = 0
+        self.count = 1
     def __call__(self, iteration):
         self.count += 1
 
@@ -25,8 +25,21 @@ class DiminishScheduler(Scheduler):
     def __call__(self, iteration=None):
         if iteration is None:
             iteration = self.count
-        gamma =  self.start_stepsize / (2 + self.args.sigma * np.sqrt(iteration / self.args.num_nodes))
+        gamma = self.start_stepsize / (2 + self.args.sigma * np.sqrt(iteration / self.args.num_nodes))
         super(DiminishScheduler, self).__call__(iteration)
+        return gamma
+
+
+class DiminishSchedulerSecond(Scheduler):
+    def __init__(self, radius, args):
+        super(DiminishSchedulerSecond, self).__init__(args)
+        self.radius = radius
+
+    def __call__(self, iteration=None):
+        if iteration is None:
+            iteration = self.count
+        gamma = self.start_stepsize * self.radius / np.sqrt(iteration)
+        super(DiminishSchedulerSecond, self).__call__(iteration)
         return gamma
 
 
